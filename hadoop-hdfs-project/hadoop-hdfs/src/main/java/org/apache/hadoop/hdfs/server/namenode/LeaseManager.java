@@ -379,6 +379,7 @@ public class LeaseManager {
       LOG.debug("inode {} not found in lease.files (={})", inodeId, lease);
     }
 
+    // 如果契约中没有文件了，则删除契约
     if (!lease.hasFiles()) {
       leases.remove(lease.holder);
       if (!sortedLeases.remove(lease)) {
@@ -557,6 +558,7 @@ public class LeaseManager {
 
     long start = monotonicNow();
 
+    // 默认一个小时未续约则认为过期
     while(!sortedLeases.isEmpty() &&
         sortedLeases.first().expiredHardLimit()
         && !isMaxLockHoldToReleaseLease(start)) {
@@ -584,6 +586,7 @@ public class LeaseManager {
           final INodeFile lastINode = iip.getLastINode().asFile();
           if (fsnamesystem.isFileDeleted(lastINode)) {
             // INode referred by the lease could have been deleted.
+            // 如果契约对应文件已经删除，清理契约中的文件信息
             removeLease(lastINode.getId());
             continue;
           }
@@ -620,6 +623,7 @@ public class LeaseManager {
         }
       }
 
+      // 清理lease中路径不正确的file
       for(Long id : removing) {
         removeLease(leaseToCheck, id);
       }

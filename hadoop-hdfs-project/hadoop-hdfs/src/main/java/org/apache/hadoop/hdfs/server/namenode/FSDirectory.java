@@ -101,6 +101,11 @@ import static org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot.CURRENT_S
  * FSDirectory is a pure in-memory data structure, all of whose operations
  * happen entirely in memory. In contrast, FSNamesystem persists the operations
  * to the disk.
+ *
+ * FSDirectory和FSNamesystem共同维护元数据。
+ * FSDirectory是一个纯内存的数据结构，所有的操作都在内存中。
+ * FSNamesystem则负责管理磁盘上的数据。
+ *
  * @see org.apache.hadoop.hdfs.server.namenode.FSNamesystem
  **/
 @InterfaceAudience.Private
@@ -662,8 +667,9 @@ public class FSDirectory implements Closeable {
     if (isCreate && !DFSUtil.isValidName(src)) {
       throw new InvalidPathException("Invalid file name: " + src);
     }
-
+    // 加入创建的目录为/user/test/dir01，这里解析出来的可能就是[/user,/test,/dir01]这样一个数组
     byte[][] components = INode.getPathComponents(src);
+    // 这里是保留原生目录，如果是"/.reserved/raw"则为true，特殊情况，不用关心
     boolean isRaw = isReservedRawName(components);
     if (isPermissionEnabled && pc != null && isRaw) {
       switch(dirOp) {
@@ -676,6 +682,7 @@ public class FSDirectory implements Closeable {
       }
     }
     components = resolveComponents(components, this);
+    // 根据components解析成INode Path
     INodesInPath iip = INodesInPath.resolve(rootDir, components, isRaw);
     // verify all ancestors are dirs and traversable.  note that only
     // methods that create new namespace items have the signature to throw

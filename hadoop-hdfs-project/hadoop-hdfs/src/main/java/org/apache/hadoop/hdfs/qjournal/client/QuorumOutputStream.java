@@ -101,15 +101,20 @@ class QuorumOutputStream extends EditLogOutputStream {
       // 2) because the calls to the underlying nodes are asynchronous, we
       //    need a defensive copy to avoid accidentally mutating the buffer
       //    before it is sent.
+      // 将双缓冲中的数据复制到一个新的数组，有两个原因：
+      // 1）RPC无法只发送大数组的一部分
+      // 2）RPC调用时异步的，避免在调用过程中，buffer中的数据被修改了
       DataOutputBuffer bufToSend = new DataOutputBuffer(numReadyBytes);
       buf.flushTo(bufToSend);
       assert bufToSend.getLength() == numReadyBytes;
       byte[] data = bufToSend.getData();
       assert data.length == bufToSend.getLength();
 
+      // 调用AsyncLogger发送，获取所有的Feature
       QuorumCall<AsyncLogger, Void> qcall = loggers.sendEdits(
           segmentTxId, firstTxToFlush,
           numReadyTxns, data);
+      // 等待所有调用执行完毕
       loggers.waitForWriteQuorum(qcall, writeTimeoutMs, "sendEdits");
       
       // Since we successfully wrote this batch, let the loggers know. Any future

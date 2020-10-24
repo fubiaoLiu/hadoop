@@ -123,6 +123,7 @@ class AsyncLoggerSet {
    */
   <V> Map<AsyncLogger, V> waitForWriteQuorum(QuorumCall<AsyncLogger, V> q,
       int timeoutMs, String operationName) throws IOException {
+    // 大多数节点的数量
     int majority = getMajoritySize();
     try {
       q.waitFor(

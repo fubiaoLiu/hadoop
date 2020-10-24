@@ -593,6 +593,7 @@ class DataXceiver extends Receiver implements Runnable {
 
     try {
       try {
+        // 初始化BlockSender
         blockSender = new BlockSender(block, blockOffset, length,
             true, false, sendChecksum, datanode, clientTraceFmt,
             cachingStrategy);
@@ -607,6 +608,7 @@ class DataXceiver extends Receiver implements Runnable {
       writeSuccessWithChecksumInfo(blockSender, new DataOutputStream(getOutputStream()));
 
       long beginRead = Time.monotonicNow();
+      // 通过blockSender发送数据
       read = blockSender.sendBlock(out, baseStream, null); // send data
       long duration = Time.monotonicNow() - beginRead;
       if (blockSender.didSendEntireByteRange()) {
@@ -692,7 +694,7 @@ class DataXceiver extends Receiver implements Runnable {
     allowLazyPersist = allowLazyPersist &&
         (dnConf.getAllowNonLocalLazyPersist() || peer.isLocal());
     long size = 0;
-    // reply to upstream datanode or client 
+    // reply to upstream datanode or client
     final DataOutputStream replyOut = getBufferedOutputStream();
 
     int nst = targetStorageTypes.length;
@@ -760,6 +762,8 @@ class DataXceiver extends Receiver implements Runnable {
       if (isDatanode || 
           stage != BlockConstructionStage.PIPELINE_CLOSE_RECOVERY) {
         // open a block receiver
+        // 初始化BlockReceiver，这是个核心组件，接收、发送数据都通过这个数据来实现
+        // 初始化BlockReceiver的时候会通知namenode，正在接收一个新的block
         setCurrentBlockReceiver(getBlockReceiver(block, storageType, in,
             peer.getRemoteAddressString(),
             peer.getLocalAddressString(),
@@ -783,6 +787,8 @@ class DataXceiver extends Receiver implements Runnable {
         mirrorNode = targets[0].getXferAddr(connectToDnViaHostname);
         LOG.debug("Connecting to datanode {}", mirrorNode);
         mirrorTarget = NetUtils.createSocketAddr(mirrorNode);
+        // 如果需要复制到其他datanode，这里会创建Socket，然后获取输出流，往datanode写block
+        // 下一个datanode如果还需要复制到其他datanode，会执行同样的操作
         mirrorSock = datanode.newSocket();
         try {
 
@@ -927,6 +933,7 @@ class DataXceiver extends Receiver implements Runnable {
       // the block is finalized in the PacketResponder.
       if (isDatanode ||
           stage == BlockConstructionStage.PIPELINE_CLOSE_RECOVERY) {
+        // 这里会通知namenode接收了一个block
         datanode.closeBlock(block, null, storageUuid, isOnTransientStorage);
         LOG.info("Received {} src: {} dest: {} of size {}",
             block, remoteAddress, localAddress, block.getNumBytes());

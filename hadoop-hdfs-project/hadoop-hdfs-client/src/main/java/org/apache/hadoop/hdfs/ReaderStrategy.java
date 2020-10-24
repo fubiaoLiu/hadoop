@@ -177,6 +177,7 @@ class ByteBufferStrategy implements ReaderStrategy {
                            int length) throws IOException {
     ByteBuffer tmpBuf = readBuf.duplicate();
     tmpBuf.limit(tmpBuf.position() + length);
+    // 通过blockReader读取
     int nRead = blockReader.read(tmpBuf);
     // Only when data are read, update the position
     if (nRead > 0) {

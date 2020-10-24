@@ -162,6 +162,7 @@ public class BlockReaderRemote implements BlockReader {
   public synchronized int read(ByteBuffer buf) throws IOException {
     if (curDataSlice == null ||
         (curDataSlice.remaining() == 0 && bytesNeededToFinish > 0)) {
+      // 读取下一个packet
       readNextPacket();
     }
     if (curDataSlice.remaining() == 0) {
@@ -226,8 +227,10 @@ public class BlockReaderRemote implements BlockReader {
     // If we've now satisfied the whole client read, read one last packet
     // header, which should be empty
     if (bytesNeededToFinish <= 0) {
+      // 读取最后一个空的packet
       readTrailingEmptyPacket();
       if (verifyChecksum) {
+        // 如果要校验checksum，这里会返回CHECKSUM_OK消息给datanode，否则返回SUCCESS，默认应该传进来的verifyChecksum应该是true
         sendReadResult(Status.CHECKSUM_OK);
       } else {
         sendReadResult(Status.SUCCESS);
@@ -393,8 +396,10 @@ public class BlockReaderRemote implements BlockReader {
       CachingStrategy cachingStrategy,
       int networkDistance) throws IOException {
     // in and out will be closed when sock is closed (by the caller)
+    // 从建立的socket连接中获取输出流，封装到DataOutputStream
     final DataOutputStream out = new DataOutputStream(new BufferedOutputStream(
         peer.getOutputStream()));
+    // 给datanode发送读block的请求
     new Sender(out).readBlock(block, blockToken, clientName, startOffset, len,
         verifyChecksum, cachingStrategy);
 

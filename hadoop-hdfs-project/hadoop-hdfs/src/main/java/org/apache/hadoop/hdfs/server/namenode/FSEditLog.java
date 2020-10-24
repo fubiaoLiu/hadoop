@@ -479,8 +479,15 @@ public class FSEditLog implements LogsPurgeable {
     op.setTransactionId(txid);
 
     try {
-      // 调用JournalSetOutputStream的write写edit log，JournalSetOutputStream会对Journal Node集群的所有节点发送edit log
-      // 如果有required状体的JournalNode写失败，立即中止所有写操作
+      // 调用JournalSetOutputStream的write写edit log，它的JournalSet中封装了QuorumOutputStream和EditLogFileOutputStream两个流
+      // QuorumOutputStream和EditLogFileOutputStream内部都维护了一个内存双缓冲区
+      // write会写入其中一个buffer，flush的时候会则会写入到JournalNode或写本地磁盘
+      // QuorumOutputStream在flush的时候会将edit log写入JournalNode集群中的所有节点，
+      // 如果有大多数节点都写成功了，则认为flush成功，如果有required状态的JournalNode写失败，立即中止所有写操作
+      // JournalSet中的流不同版本可能有差异，不一定两个流都有
+      // 2.6.x版本namenode edit log只写journal node不写本地磁盘
+      // 2.9.1版本naemnode edit log既写journal node也写本地磁盘
+      //
       editLogStream.write(op);
     } catch (IOException ex) {
       // All journals failed, it is handled in logSync.
@@ -687,6 +694,7 @@ public class FSEditLog implements LogsPurgeable {
             if (journalSet.isEmpty()) {
               throw new IOException("No journals available to flush");
             }
+            // 交换双缓冲
             editLogStream.setReadyToFlush();
           } catch (IOException e) {
             final String msg =
@@ -712,6 +720,7 @@ public class FSEditLog implements LogsPurgeable {
       long start = monotonicNow();
       try {
         if (logStream != null) {
+          // 执行flush
           logStream.flush();
         }
       } catch (IOException ex) {
@@ -1384,7 +1393,8 @@ public class FSEditLog implements LogsPurgeable {
     storage.attemptRestoreRemovedStorage();
     
     try {
-      // 创建edit log流，这里创建的是JournalSetOutputStream，edit logs会直接写到Journal Node上去
+      // 创建edit log流，这里创建的是JournalSet.JournalSetOutputStream，JournalSet中维护了一组流
+      // edit logs会通过这组流写到本地磁盘或发送到Journal Node上去
       editLogStream = journalSet.startLogSegment(segmentTxId, layoutVersion);
     } catch (IOException ex) {
       throw new IOException("Unable to start log segment " +

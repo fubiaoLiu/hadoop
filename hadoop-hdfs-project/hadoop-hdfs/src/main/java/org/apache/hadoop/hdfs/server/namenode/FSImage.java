@@ -756,6 +756,7 @@ public class FSImage implements Closeable {
     prog.endPhase(Phase.LOADING_FSIMAGE);
     
     if (!rollingRollback) {
+      // 加载edit logs并应用到内存中
       long txnsAdvanced = loadEdits(editStreams, target, Long.MAX_VALUE,
           startOpt, recovery);
       needToSave |= needsResaveBasedOnStaleCheckpoint(imageFile.getFile(),
@@ -837,6 +838,7 @@ public class FSImage implements Closeable {
             || RollingUpgradeStartupOption.ROLLBACK.matches(startOpt))) {
       // This NN is HA, but we're doing an upgrade or a rollback of rolling
       // upgrade so init the edit log for write.
+      // 如果是HA双实例，但是正在升级或者回滚滚动升级，初始化editsDirs到JournalSet
       editLog.initJournalsForWrite();
       if (startOpt == StartupOption.UPGRADE
           || startOpt == StartupOption.UPGRADEONLY) {
@@ -852,6 +854,7 @@ public class FSImage implements Closeable {
       editLog.recoverUnclosedStreams();
     } else {
       // This NN is HA and we're not doing an upgrade.
+      // 如果是HA双实例，初始化sharedEditsDirs到JournalSet
       editLog.initSharedJournalsForRead();
     }
   }
@@ -910,6 +913,7 @@ public class FSImage implements Closeable {
               (lastAppliedTxId + 1) + logSuppressed);
         }
         try {
+          // 加载一个edit log并应用到内存结构中
           remainingReadTxns -= loader.loadFSEdits(editIn, lastAppliedTxId + 1,
                   remainingReadTxns, startOpt, recovery);
         } finally {
@@ -990,6 +994,7 @@ public class FSImage implements Closeable {
     
     FSImageFormatProtobuf.Saver saver = new FSImageFormatProtobuf.Saver(context);
     FSImageCompression compression = FSImageCompression.createCompression(conf);
+    // 保存到磁盘文件
     long numErrors = saver.save(newFile, compression);
     if (numErrors > 0) {
       // The image is likely corrupted.
@@ -998,6 +1003,7 @@ public class FSImage implements Closeable {
       exitAfterSave.set(true);
     }
 
+    // 保存MD5校验和文件，会定期重新生成校验和比较，下载文件时也会生成校验和比较，如果不一致则认为文件损坏
     MD5FileUtils.saveMD5File(dstFile, saver.getSavedDigest());
     storage.setMostRecentCheckpointInfo(txid, Time.now());
   }
@@ -1049,6 +1055,7 @@ public class FSImage implements Closeable {
       // Deletes checkpoint file in every storage directory when shutdown.
       Runnable cancelCheckpointFinalizer = () -> {
         try {
+          // 删除取消的checkpoint文件
           deleteCancelledCheckpoint(context.getTxId());
           LOG.info("FSImageSaver clean checkpoint: txid={} when meet " +
               "shutdown.", context.getTxId());
@@ -1224,6 +1231,7 @@ public class FSImage implements Closeable {
         source, txid, canceler);
     
     try {
+      // 每个存储目录创建一个线程，保存内存数据到新的fsimage文件
       List<Thread> saveThreads = new ArrayList<Thread>();
       // save images into current
       for (Iterator<StorageDirectory> it
@@ -1234,6 +1242,8 @@ public class FSImage implements Closeable {
         saveThreads.add(saveThread);
         saveThread.start();
       }
+
+      // 等待所有线程执行结束
       waitForThreads(saveThreads);
       saveThreads.clear();
       storage.reportErrorsOnDirectories(ctx.getErrorSDs());
@@ -1247,12 +1257,14 @@ public class FSImage implements Closeable {
         ctx.checkCancelled(); // throws
         assert false : "should have thrown above!";
       }
-  
+
+      // 新的fsimage重命名（fsimage.ckpt -> fsimage），如果fsimage文件已存在则先删除
       renameCheckpoint(txid, NameNodeFile.IMAGE_NEW, nnf, false);
   
       // Since we now have a new checkpoint, we can clean up some
       // old edit logs and checkpoints.
       // Do not purge anything if we just wrote a corrupted FsImage.
+      // 清理edit logs文件
       if (!exitAfterSave.get()) {
         purgeOldStorage(nnf);
         archivalManager.purgeCheckpoints(NameNodeFile.IMAGE_NEW);

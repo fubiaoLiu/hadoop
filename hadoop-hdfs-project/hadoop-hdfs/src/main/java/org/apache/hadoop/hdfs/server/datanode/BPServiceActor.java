@@ -359,6 +359,9 @@ class BPServiceActor implements Runnable {
     // we have a chance that we will miss the delHint information
     // or we will report an RBW replica after the BlockReport already reports
     // a FINALIZED one.
+    // 将增量的block report上报给namenode
+    // datanode开始接收一个新的block和接收了一个block都会通知namenode，此时就会往这里加一个report
+    // 等待后台线程执行时异步发送
     ibrManager.sendIBRs(bpNamenode, bpRegistration,
         bpos.getBlockPoolId());
 
@@ -391,6 +394,7 @@ class BPServiceActor implements Runnable {
     try {
       if (totalBlockCount < dnConf.blockReportSplitThreshold) {
         // Below split threshold, send all reports in a single message.
+        // block总数小于100w时，直接上报全量block
         DatanodeCommand cmd = bpNamenode.blockReport(
             bpRegistration, bpos.getBlockPoolId(), reports,
               new BlockReportContext(1, 0, reportId, fullBrLeaseId, true));
@@ -403,6 +407,7 @@ class BPServiceActor implements Runnable {
         }
       } else {
         // Send one block report per message.
+        // 分多次发送，每次发送一份报告
         for (int r = 0; r < reports.length; r++) {
           StorageBlockReport singleReport[] = { reports[r] };
           DatanodeCommand cmd = bpNamenode.blockReport(
@@ -693,6 +698,9 @@ class BPServiceActor implements Runnable {
             }
           }
         }
+
+        // 发送增量的block report，当datanode要接收一个新的block或接收了一个block都会产生一个block report
+        // 跟心跳的调用频率一致，3s一次
         if (!dn.areIBRDisabledForTests() &&
             (ibrManager.sendImmediately()|| sendHeartbeat)) {
           ibrManager.sendIBRs(bpNamenode, bpRegistration,
@@ -746,6 +754,8 @@ class BPServiceActor implements Runnable {
       } finally {
         DataNodeFaultInjector.get().endOfferService();
       }
+      // 处理bpThreadQueue队列中的消息，bpThreadQueue队列在datanode发现损坏的block后，会将block添加到这个队列
+      // 每次循环都会调用，基本上就是3s一次
       processQueueMessages();
     } // while (shouldRun())
   } // offerService
@@ -965,6 +975,7 @@ class BPServiceActor implements Runnable {
     while (!duplicateQueue.isEmpty()) {
       BPServiceActorAction actionItem = duplicateQueue.remove();
       try {
+        // 这里会通过namenode的rpc代理调用namenode的rpc接口，上报损坏的block
         actionItem.reportTo(bpNamenode, bpRegistration);
       } catch (BPServiceActorActionException baae) {
         LOG.warn(baae.getMessage() + nnAddr , baae);

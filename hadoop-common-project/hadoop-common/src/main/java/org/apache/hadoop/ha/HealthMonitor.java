@@ -200,6 +200,7 @@ public class HealthMonitor {
       boolean healthy = false;
       try {
         status = proxy.getServiceStatus();
+        // 这里会通过rpc代理调用namenode的rpc server进行健康检查
         proxy.monitorHealth();
         healthy = true;
       } catch (Throwable t) {
@@ -291,8 +292,10 @@ public class HealthMonitor {
     @Override
     public void run() {
       while (shouldRun) {
-        try { 
+        try {
+          // 这里会进入while true死循环，直到连接成功（创建rpc代理）
           loopUntilConnected();
+          // 这里也会进入while true死循环，不停的进行健康检查，每1s执行一次
           doHealthChecks();
         } catch (InterruptedException ie) {
           Preconditions.checkState(!shouldRun,

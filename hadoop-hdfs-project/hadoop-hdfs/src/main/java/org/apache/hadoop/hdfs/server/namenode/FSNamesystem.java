@@ -1108,7 +1108,6 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       // We shouldn't be calling saveNamespace if we've come up in standby state.
       // 从磁盘加载fsimage、edit logs文件，在内存中合并为一份完整的元数据
       // 然后将内存中的元数据写一份到磁盘上替换原来旧的fsimage，并且重新打开一个新的空的edits文件，用于后面写入
-      // TODO 因为现在是第一次启动，磁盘上是没有数据的，这里就先不看
       MetaRecoveryContext recovery = startOpt.createRecoveryContext();
       final boolean staleImage
           = fsImage.recoverTransitionRead(startOpt, this, recovery);
@@ -1584,6 +1583,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       }
     }    
     // Now add the non-shared dirs.
+    // file://${hadoop.tmp.dir}/dfs/name
     for (URI dir : getStorageDirs(conf, DFS_NAMENODE_EDITS_DIR_KEY)) {
       if (!editsDirs.add(dir)) {
         LOG.warn("Edits URI " + dir + " listed multiple times in " + 
@@ -1606,6 +1606,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
    * @param conf configuration
    * @return collection of edit directories from {@code conf}
    */
+  // 非HA双实例，sharedEditsDirs为空
   public static List<URI> getSharedEditsDirs(Configuration conf) {
     // don't use getStorageDirs here, because we want an empty default
     // rather than the dir in /tmp
@@ -2799,6 +2800,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       return onRetryBlock[0];
     }
 
+    // 给新的block分配datanode
     DatanodeStorageInfo[] targets = FSDirWriteFileOp.chooseTargetForNewBlock(
         blockManager, src, excludedNodes, favoredNodes, flags, r);
 
@@ -2807,11 +2809,13 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     LocatedBlock lb;
     try {
       checkOperation(OperationCategory.WRITE);
+      // 这个方法里会创建block，根据分配的datanode信息，封装一个LocatedBlock对象
       lb = FSDirWriteFileOp.storeAllocatedBlock(
           this, src, fileId, clientName, previous, targets);
     } finally {
       writeUnlock(operationName);
     }
+    // 执行edit log sync操作
     getEditLog().logSync();
     return lb;
   }
@@ -3243,6 +3247,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     try {
       checkOperation(OperationCategory.WRITE);
       checkNameNodeSafeMode("Cannot create directory " + src);
+      // 创建逻辑在这里面
       auditStat = FSDirMkdirOp.mkdirs(this, pc, src, permissions,
           createParent);
     } catch (AccessControlException e) {
@@ -3251,6 +3256,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     } finally {
       writeUnlock(operationName);
     }
+    // 获取edit log执行sync操作
     getEditLog().logSync();
     logAuditEvent(true, operationName, src, null, auditStat);
     return true;
@@ -3428,6 +3434,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
 
     // If there are no incomplete blocks associated with this file,
     // then reap lease immediately and close the file.
+    // 如果文件没有不完整的block，直接从lease中删除
     if(nrCompleteBlocks == nrBlocks) {
       finalizeINodeFileUnderConstruction(src, pendingFile,
           iip.getLatestSnapshotId(), false);
@@ -5282,7 +5289,9 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   private long nextBlockId(BlockType blockType) throws IOException {
     assert hasWriteLock();
     checkNameNodeSafeMode("Cannot get next block ID");
+    // 通过AtomicLong获取一个blockId
     final long blockId = blockManager.nextBlockId(blockType);
+    // 写edit log
     getEditLog().logAllocateBlockId(blockId);
     // NB: callers sync the log
     return blockId;
@@ -5377,6 +5386,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         for (int j = 0; j < nodes.length; j++) {
           NameNode.stateChangeLog.info("*DIR* reportBadBlocks for block: {} on"
               + " datanode: {}", blk, nodes[j].getXferAddr());
+          // 交给BlockManager处理，将属于这个datanode的这个block标记为损坏
           blockManager.findAndMarkBlockAsCorrupt(blk, nodes[j],
               storageIDs == null ? null: storageIDs[j],
               "client machine reported it");
@@ -5393,6 +5403,8 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
    * 
    * This method is called for recovering a failed write or setting up
    * a block for appended.
+   *
+   * 此方法可以恢复失败的写入或添加设置一个block。
    * 
    * @param block a block
    * @param clientName the name of a client

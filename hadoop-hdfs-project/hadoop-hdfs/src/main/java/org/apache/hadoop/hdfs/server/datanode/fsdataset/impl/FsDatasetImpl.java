@@ -1726,6 +1726,10 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
      * configured. Though rename should be atomic operation, sync on both
      * dest and src directories are done because IOUtils.fsync() calls
      * directory's channel sync, not the journal itself.
+     *
+     * 如果配置了，tmp/rbw重命名后将目录同步到Finalized。
+     * 尽管重命名应该是原子操作，但是在dest和src目录上都进行了同步
+     * 因为IOUtils.fsync（）会调用目录的通道同步，而不是journal本身。
      */
     if (fsyncDir && finalizedReplicaInfo instanceof FinalizedReplica
         && replicaInfo instanceof LocalReplica) {

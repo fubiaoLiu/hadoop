@@ -328,6 +328,7 @@ public class EditLogTailer {
       Collection<EditLogInputStream> streams;
       long startTime = Time.monotonicNow();
       try {
+        // 获取edit logs的文件输入流
         streams = editLog.selectInputStreams(lastTxnId + 1, 0,
             null, inProgressOk, true);
       } catch (IOException ioe) {
@@ -350,6 +351,7 @@ public class EditLogTailer {
       // disk are ignored.
       long editsLoaded = 0;
       try {
+        // 从edit log的文件输入流加载edit log信息
         editsLoaded = image.loadEdits(
             streams, namesystem, maxTxnsPerLock, null, null);
       } catch (EditLogInputException elie) {
@@ -491,7 +493,7 @@ public class EditLogTailer {
           try {
             NameNode.getNameNodeMetrics().addEditLogTailInterval(
                 startTime - lastLoadTimeMs);
-            // 核心逻辑在这里
+            // 核心逻辑在这里，editsTailed表示读取到的edit log数量
             editsTailed = doTailEdits();
           } finally {
             namesystem.cpUnlock();

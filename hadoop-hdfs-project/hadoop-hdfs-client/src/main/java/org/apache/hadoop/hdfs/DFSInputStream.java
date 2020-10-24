@@ -182,6 +182,7 @@ public class DFSInputStream extends FSInputStream
       this.cachingStrategy = dfsClient.getDefaultReadCachingStrategy();
     }
     this.locatedBlocks = locatedBlocks;
+    // 从namenode获取打开的文件信息
     openInfo(false);
   }
 
@@ -199,6 +200,7 @@ public class DFSInputStream extends FSInputStream
     synchronized(infoLock) {
       lastBlockBeingWrittenLength =
           fetchLocatedBlocksAndGetLastBlockLength(refreshLocatedBlocks);
+      // 尝试获取最后一个block长度的重复次数，默认是3，获取失败就抛异常
       int retriesForLastBlockLength = conf.getRetryTimesForGetLastBlockLength();
       while (retriesForLastBlockLength > 0) {
         // Getting last block length as -1 is a special case. When cluster
@@ -238,6 +240,7 @@ public class DFSInputStream extends FSInputStream
       throws IOException {
     LocatedBlocks newInfo = locatedBlocks;
     if (locatedBlocks == null || refresh) {
+      // 初始化时前面已经执行过了，这里不会执行，除非要刷新数据
       newInfo = dfsClient.getLocatedBlocks(src, 0);
     }
     DFSClient.LOG.debug("newInfo = {}", newInfo);
@@ -254,6 +257,7 @@ public class DFSInputStream extends FSInputStream
         }
       }
     }
+    // 获取最后一个block的长度
     locatedBlocks = newInfo;
     long lastBlockBeingWrittenLength = 0;
     if (!locatedBlocks.isLastBlockComplete()) {
@@ -290,14 +294,17 @@ public class DFSInputStream extends FSInputStream
     LinkedList<DatanodeInfo> retryList = new LinkedList<DatanodeInfo>();
     boolean isRetry = false;
     StopWatch sw = new StopWatch();
+    // 遍历该block的所有副本，尝试获取长度，获取成功则返回，否则抛异常
     while (nodeList.size() > 0) {
       DatanodeInfo datanode = nodeList.pop();
       ClientDatanodeProtocol cdp = null;
       try {
+        // 创建最后一个block所在datanode的rpc代理
         cdp = DFSUtilClient.createClientDatanodeProtocolProxy(datanode,
             dfsClient.getConfiguration(), timeout,
             conf.isConnectToDnViaHostname(), locatedblock);
 
+        // 获取该block的长度
         final long n = cdp.getReplicaVisibleLength(locatedblock.getBlock());
 
         if (n >= 0) {
@@ -539,6 +546,7 @@ public class DFSInputStream extends FSInputStream
     }
 
     // Will be getting a new BlockReader.
+    // 关闭当前BlockReader，后面会重新获取一个BlockReader
     closeCurrentBlockReaders();
 
     //
@@ -553,7 +561,7 @@ public class DFSInputStream extends FSInputStream
     while (true) {
       //
       // Compute desired block
-      //
+      // 获取对应的block
       LocatedBlock targetBlock = getBlockAt(target);
 
       // update current position
@@ -564,6 +572,7 @@ public class DFSInputStream extends FSInputStream
 
       long offsetIntoBlock = target - targetBlock.getStartOffset();
 
+      // 选择一个block副本所在的datanode，获取地址信息
       DNAddrPair retval = chooseDataNode(targetBlock, null);
       chosenNode = retval.info;
       InetSocketAddress targetAddr = retval.addr;
@@ -572,6 +581,8 @@ public class DFSInputStream extends FSInputStream
       targetBlock = retval.block;
 
       try {
+        // 对选定的datanode创建一个BlockReader，用于读取block
+        // 这里会建立socket连接，创建BlockReaderRemote，并且向datanode发送READ_BLOCK请求，datanode会做一些初始化的工作
         blockReader = getBlockReader(targetBlock, offsetIntoBlock,
             targetBlock.getBlockSize() - offsetIntoBlock, targetAddr,
             storageType, chosenNode);
@@ -702,6 +713,7 @@ public class DFSInputStream extends FSInputStream
     while (true) {
       // retry as many times as seekToNewSource allows.
       try {
+        // 从block中读取数据
         return reader.readFromBlock(blockReader, len);
       } catch (ChecksumException ce) {
         DFSClient.LOG.warn("Found Checksum error for "

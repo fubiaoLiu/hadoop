@@ -191,6 +191,7 @@ public class StandbyCheckpointer {
       } else {
         imageType = NameNodeFile.IMAGE;
       }
+      // 保存内存中的fsimage到一个新的磁盘文件
       img.saveNamespace(namesystem, imageType, canceler);
       txid = img.getStorage().getMostRecentCheckpointTxId();
       assert txid == thisCheckpointTxId : "expected to save checkpoint at txid=" +
@@ -210,11 +211,13 @@ public class StandbyCheckpointer {
       namesystem.cpUnlock();
     }
 
+    // 如果不需要将checkpoint发送到active namenode直接返回
     //early exit if we shouldn't actually send the checkpoint to the ANN
     if(!sendCheckpoint){
       return;
     }
 
+    // 将checkpoint发送至active namenode
     // Upload the saved checkpoint back to the active
     // Do this in a separate thread to avoid blocking transition to active, but don't allow more
     // than the expected number of tasks to run or queue up
@@ -369,6 +372,7 @@ public class StandbyCheckpointer {
     }
 
     private void doWork() {
+      // 60 * 1000，1分钟
       final long checkPeriod = 1000 * checkpointConf.getCheckPeriod();
       // Reset checkpoint time so that we don't always checkpoint
       // on startup.
@@ -401,12 +405,14 @@ public class StandbyCheckpointer {
           if (needCheckpoint) {
             LOG.info("Triggering a rollback fsimage for rolling upgrade.");
           } else if (uncheckpointed >= checkpointConf.getTxnCount()) {
+            // 如果未checkpoint的日志超过了100w条，则需要checkpoint
             LOG.info("Triggering checkpoint because there have been {} txns " +
                 "since the last checkpoint, " +
                 "which exceeds the configured threshold {}",
                 uncheckpointed, checkpointConf.getTxnCount());
             needCheckpoint = true;
           } else if (secsSinceLast >= checkpointConf.getPeriod()) {
+            // 如果距上次checkpoint超过了一小时，则需要checkpoint
             LOG.info("Triggering checkpoint because it has been {} seconds " +
                 "since the last checkpoint, which exceeds the configured " +
                 "interval {}", secsSinceLast, checkpointConf.getPeriod());
@@ -429,6 +435,8 @@ public class StandbyCheckpointer {
             final long secsSinceLastUpload = (now - lastUploadTime) / 1000;
             boolean sendRequest = isPrimaryCheckPointer
                 || secsSinceLastUpload >= checkpointConf.getQuietPeriod();
+
+            // 实际执行checkpoint
             doCheckpoint(sendRequest);
 
             // reset needRollbackCheckpoint to false only when we finish a ckpt

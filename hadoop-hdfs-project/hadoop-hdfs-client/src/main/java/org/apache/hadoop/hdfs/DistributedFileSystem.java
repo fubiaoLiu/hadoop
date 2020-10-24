@@ -315,6 +315,7 @@ public class DistributedFileSystem extends FileSystem
     return new FileSystemLinkResolver<FSDataInputStream>() {
       @Override
       public FSDataInputStream doCall(final Path p) throws IOException {
+        // 通过DFSClient创建一个DFSInputStream输入流，再包装到FSDataInputStream
         final DFSInputStream dfsis =
             dfs.open(getPathName(p), bufferSize, verifyChecksum);
         return dfs.createWrappedInputStream(dfsis);
@@ -527,9 +528,11 @@ public class DistributedFileSystem extends FileSystem
     return new FileSystemLinkResolver<FSDataOutputStream>() {
       @Override
       public FSDataOutputStream doCall(final Path p) throws IOException {
+        // 创建DFSOutputStream，再包装到FSDataOutputStream
         final DFSOutputStream dfsos = dfs.create(getPathName(p), permission,
             cflags, replication, blockSize, progress, bufferSize,
             checksumOpt);
+        // 写数据的时候会调用到DFSOutputStream流的父类FSOutputSummer的write()方法
         return dfs.createWrappedOutputStream(dfsos, statistics);
       }
       @Override

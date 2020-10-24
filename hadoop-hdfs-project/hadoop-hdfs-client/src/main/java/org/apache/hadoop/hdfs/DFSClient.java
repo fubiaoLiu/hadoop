@@ -204,6 +204,13 @@ import com.google.common.net.InetAddresses;
  * DistributedFileSystem, which uses DFSClient to handle
  * filesystem tasks.
  *
+ * DFSClient可以连接到hdfs并执行基本的文件操作，
+ * 它使用ClientProtocol和namenode的守护线程进行通信，
+ * 并且可以直接连接datanode读写block数据。
+ *
+ * HDFS用户需要获取DistributedFileSystem对象实例，
+ * DistributedFileSystem底层使用DFSClient执行filesystem的操作。
+ *
  ********************************************************/
 @InterfaceAudience.Private
 public class DFSClient implements java.io.Closeable, RemotePeerFactory,
@@ -213,6 +220,7 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
   private final Configuration conf;
   private final Tracer tracer;
   private final DfsClientConf dfsClientConf;
+  // namenode代理
   final ClientProtocol namenode;
   /* The service used for delegation tokens */
   private Text dtService;
@@ -485,11 +493,13 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
         namenodeUri != null ? namenodeUri.getAuthority() : "null", ugi, this);
   }
 
+  // 获取契约并开启自动续约，创建文件时，NameNode已经给此客户端创建了契约
   /** Get a lease and start automatic renewal */
   private void beginFileLease(final long inodeId, final DFSOutputStream out)
       throws IOException {
     synchronized (filesBeingWritten) {
       putFileBeingWritten(inodeId, out);
+      // 开启守护线程，自动续约
       getLeaseRenewer().put(this);
     }
   }
@@ -566,7 +576,7 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
   public boolean renewLease() throws IOException {
     if (clientRunning && !isFilesBeingWrittenEmpty()) {
       try {
-        namenode.renewLease(clientName);
+          namenode.renewLease(clientName);
         updateLastLeaseRenewal();
         return true;
       } catch (IOException e) {
@@ -1007,6 +1017,7 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
     checkOpen();
     //    Get block info from namenode
     try (TraceScope ignored = newPathTraceScope("newDFSInputStream", src)) {
+      // 先请求namenode，获取block信息
       LocatedBlocks locatedBlocks = getLocatedBlocks(src, 0);
       return openInternal(locatedBlocks, src, verifyChecksum);
     }
@@ -1045,6 +1056,7 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
         return new DFSStripedInputStream(this, src, verifyChecksum, ecPolicy,
             locatedBlocks);
       }
+      // 创建DFSInputStream
       return new DFSInputStream(this, src, verifyChecksum, locatedBlocks);
     } else {
       throw new IOException("Cannot open filename " + src);
@@ -1214,10 +1226,13 @@ public class DFSClient implements java.io.Closeable, RemotePeerFactory,
     checkOpen();
     final FsPermission masked = applyUMask(permission);
     LOG.debug("{}: masked={}", src, masked);
+    // 在这里面会调用namenode创建文件
+    // 并且namenode会创建客户端文件对应的契约，namenode同时只允许一个客户端对一个文件进行操作
     final DFSOutputStream result = DFSOutputStream.newStreamForCreate(this,
         src, masked, flag, createParent, replication, blockSize, progress,
         dfsClientConf.createChecksum(checksumOpt),
         getFavoredNodesStr(favoredNodes), ecPolicyName);
+    // 这里会开启一个续约线程，不停的对契约进行续约，防止契约过期被回收
     beginFileLease(result.getFileId(), result);
     return result;
   }

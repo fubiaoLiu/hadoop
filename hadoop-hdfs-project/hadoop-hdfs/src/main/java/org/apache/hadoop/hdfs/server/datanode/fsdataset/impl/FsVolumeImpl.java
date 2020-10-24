@@ -959,6 +959,7 @@ public class FsVolumeImpl implements FsVolumeSpi {
    */
   ReplicaInfo addFinalizedBlock(String bpid, Block b, ReplicaInfo replicaInfo,
       long bytesReserved) throws IOException {
+    // 释放资源
     releaseReservedSpace(bytesReserved);
     File dest = getBlockPoolSlice(bpid).addFinalizedBlock(b, replicaInfo);
     byte[] checksum = null;

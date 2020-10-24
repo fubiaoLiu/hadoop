@@ -268,7 +268,13 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
     if (excludedNodes == null) {
       excludedNodes = new HashSet<>();
     }
-     
+
+    // 计算每个机架最多可以分配的datanode节点数量
+    // 比如3个副本，就1个机架，只能分配到一个机架上，一个机架最多分配3个
+    // 如果有2个机架，那么1个机架最多分配2个
+    // 如果有3个机架，那么1个机架最多也是分配2个
+    // 当机架数大于1时，要避免所有副本在一个机架上，分配在多个机架，可以提高容灾性，如果整个机架挂了，在其他机架上还有副本
+    // 要副本数大于1时，要避免所有副本都在不同机架上（有两个副本在一个机架上），提高传输速度，同一个机架间的速度远大于不同机架间
     int[] result = getMaxNodesPerRack(chosenStorage.size(), numOfReplicas);
     numOfReplicas = result[0];
     int maxNodesPerRack = result[1];
@@ -331,19 +337,21 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
    * @param numOfChosen The number of already chosen nodes.
    * @param numOfReplicas The number of additional nodes to allocate.
    * @return integer array. Index 0: The number of nodes allowed to allocate
-   *         in addition to already chosen nodes.
+   *         in addition to already chosen nodes. 除已选择的节点外，允许分配的节点数
    *         Index 1: The maximum allowed number of nodes per rack. This
    *         is independent of the number of chosen nodes, as it is calculated
-   *         using the target number of replicas.
+   *         using the target number of replicas. 每个机架允许的最大节点数
    */
   protected int[] getMaxNodesPerRack(int numOfChosen, int numOfReplicas) {
     int clusterSize = clusterMap.getNumOfLeaves();
     int totalNumOfReplicas = numOfChosen + numOfReplicas;
+    // 如果副本数大于集群节点数，这设置副本数为节点数，计算剩余需分配节点数
     if (totalNumOfReplicas > clusterSize) {
       numOfReplicas -= (totalNumOfReplicas-clusterSize);
       totalNumOfReplicas = clusterSize;
     }
-    // No calculation needed when there is only one rack or picking one node.
+    // no calculation needed when there is only one rack or picking one node.
+    // 如果只有一个机架，或者只需要一个副本时，不需要计算
     int numOfRacks = clusterMap.getNumOfRacks();
     if (numOfRacks == 1 || totalNumOfReplicas <= 1) {
       return new int[] {numOfReplicas, totalNumOfReplicas};
@@ -352,6 +360,7 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
     int maxNodesPerRack = (totalNumOfReplicas-1)/numOfRacks + 2;
     // At this point, there are more than one racks and more than one replicas
     // to store. Avoid all replicas being in the same rack.
+    // 避免所有副本在同一个机架
     //
     // maxNodesPerRack has the following properties at this stage.
     //   1) maxNodesPerRack >= 2

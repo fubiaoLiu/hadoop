@@ -1800,9 +1800,16 @@ public class BlockManager implements BlockStatsMXBean {
     //         case genstamp will be different than that of valid block.
     // In all these cases we can delete the replica.
     // In case of 3, rbw block will be deleted and valid block can be replicated
+
+    // 1、有足够数量的副本
+    // 2、损坏的副本数 + 存活的副本 > 指定的副本数
+    // 3、因为写入失败被标记损坏的block，此类block的genstamp和有效的block不一样
+    // 以上这些情况都可以删除副本，第3种情况会删除rbw block，然后从其他有效的block复制一份
+
     if (hasEnoughLiveReplicas || hasMoreCorruptReplicas
         || corruptedDuringWrite) {
       // the block is over-replicated so invalidate the replicas immediately
+      // 意思是有足够的副本数量，直接将损坏的block副本作废即可
       invalidateBlock(b, node, numberOfReplicas);
     } else if (isPopulatingReplQueues()) {
       // add the block to neededReconstruction
@@ -1896,6 +1903,10 @@ public class BlockManager implements BlockStatsMXBean {
    * The number of process blocks equals either twice the number of live
    * data-nodes or the number of low redundancy blocks whichever is less.
    *
+   * 扫描neededReconstruction中的block，然后将删除/复制相关的任务分发到相应的datanode
+   *
+   * 处理 block数量等于存活数据节点数量的两倍或低冗余块的数量，以较小者为准。
+   *
    * @return number of blocks scheduled for reconstruction during this
    *         iteration.
    */
@@ -1904,6 +1915,7 @@ public class BlockManager implements BlockStatsMXBean {
     namesystem.writeLock();
     try {
       // Choose the blocks to be reconstructed
+      // 获取没有足够副本数的block列表
       blocksToReconstruct = neededReconstruction
           .chooseLowRedundancyBlocks(blocksToProcess);
     } finally {
@@ -1932,6 +1944,7 @@ public class BlockManager implements BlockStatsMXBean {
         for (int priority = 0; priority < blocksToReconstruct
             .size(); priority++) {
           for (BlockInfo block : blocksToReconstruct.get(priority)) {
+            // 第一步：构建block的复制任务
             BlockReconstructionWork rw = scheduleReconstruction(block,
                 priority);
             if (rw != null) {
@@ -1945,6 +1958,7 @@ public class BlockManager implements BlockStatsMXBean {
     }
 
     // Step 2: choose target nodes for each reconstruction task
+    // 第二步：给上面构建的每个任务都分配目标datanode节点
     final Set<Node> excludedNodes = new HashSet<>();
     for(BlockReconstructionWork rw : reconWork){
       // Exclude all of the containing nodes from being targets.
@@ -1961,6 +1975,7 @@ public class BlockManager implements BlockStatsMXBean {
     }
 
     // Step 3: add tasks to the DN
+    // 第三步：将任务分发到datanode
     namesystem.writeLock();
     try {
       for(BlockReconstructionWork rw : reconWork){
@@ -1971,6 +1986,8 @@ public class BlockManager implements BlockStatsMXBean {
         }
 
         synchronized (neededReconstruction) {
+          // 校验副本重建任务，校验通过则加入到任务对应源datanode的任务队列
+          // 在该datanode下次心跳时，下发队列中的任务
           if (validateReconstructionWork(rw)) {
             scheduledWork++;
           }
@@ -2023,6 +2040,7 @@ public class BlockManager implements BlockStatsMXBean {
     }
 
     // get a source data-node
+    // 选择复制的源datanode节点
     List<DatanodeDescriptor> containingNodes = new ArrayList<>();
     List<DatanodeStorageInfo> liveReplicaNodes = new ArrayList<>();
     NumberReplicas numReplicas = new NumberReplicas();
@@ -2141,6 +2159,7 @@ public class BlockManager implements BlockStatsMXBean {
     }
 
     // Add block to the datanode's task list
+    // 将任务添加到对应源datanode的任务队列，在该datanode下一次心跳时，下发这些任务
     rw.addTaskToDatanode(numReplicas);
     DatanodeStorageInfo.incrementBlocksScheduled(targets);
 
@@ -2208,6 +2227,7 @@ public class BlockManager implements BlockStatsMXBean {
         storagePolicySuite.getPolicy(storagePolicyID);
     final BlockPlacementPolicy blockplacement =
         placementPolicies.getPolicy(blockType);
+    // 这里调用到默认的策略BlockPlacementPolicyDefault中
     final DatanodeStorageInfo[] targets = blockplacement.chooseTarget(src,
         numOfReplicas, client, excludedNodes, blocksize, 
         favoredDatanodeDescriptors, storagePolicy, flags);
@@ -3067,6 +3087,7 @@ public class BlockManager implements BlockStatsMXBean {
   /**
    * Queue the given reported block for later processing in the
    * standby node. @see PendingDataNodeMessages.
+   * 这里是对block report进行排队，方便给standby namenode处理
    * @param reason a textual reason to report in the debug logs
    */
   private void queueReportedBlock(DatanodeStorageInfo storageInfo, Block block,
@@ -3385,6 +3406,7 @@ public class BlockManager implements BlockStatsMXBean {
       // Is no-op if not in safe mode.
       // In the case that the block just became complete above, completeBlock()
       // handles the safe block count maintenance.
+      // 如果block是完整的，更新safe block的数量，
       bmSafeMode.incrementSafeBlockCount(numCurrentReplica, storedBlock);
     }
     
@@ -3399,7 +3421,9 @@ public class BlockManager implements BlockStatsMXBean {
     }
 
     // handle low redundancy/extra redundancy
+    // 处理缺少/冗余的副本数量
     short fileRedundancy = getExpectedRedundancyNum(storedBlock);
+    //
     if (!isNeededReconstruction(storedBlock, num, pendingNum)) {
       neededReconstruction.remove(storedBlock, numCurrentReplica,
           num.readOnlyReplicas(), num.outOfServiceReplicas(), fileRedundancy);
@@ -3412,6 +3436,7 @@ public class BlockManager implements BlockStatsMXBean {
     }
     // If the file redundancy has reached desired value
     // we can remove any corrupt replicas the block may have
+    // 如果文件副本达到了需要的数量，就可以删除任何可能损坏的block
     int corruptReplicasCount = corruptReplicas.numCorruptReplicas(storedBlock);
     int numCorruptNodes = num.corruptReplicas();
     if (numCorruptNodes != corruptReplicasCount) {
@@ -4135,6 +4160,7 @@ public class BlockManager implements BlockStatsMXBean {
         deleted++;
         break;
       case RECEIVED_BLOCK:
+        // 当datanode接收到block后，通知namenode，会走这个分支
         addBlock(storageInfo, rdbi.getBlock(), rdbi.getDelHints());
         received++;
         break;
@@ -4668,6 +4694,7 @@ public class BlockManager implements BlockStatsMXBean {
 
   /**
    * Periodically calls computeBlockRecoveryWork().
+   * 定期调用computeBlockRecoveryWork()方法
    */
   private class RedundancyMonitor implements Runnable {
 
@@ -4677,6 +4704,7 @@ public class BlockManager implements BlockStatsMXBean {
         try {
           // Process recovery work only when active NN is out of safe mode.
           if (isPopulatingReplQueues()) {
+            // 计算datanode的任务
             computeDatanodeWork();
             processPendingReconstructions();
             rescanPostponedMisreplicatedBlocks();
@@ -4792,6 +4820,9 @@ public class BlockManager implements BlockStatsMXBean {
    * Compute block replication and block invalidation work that can be scheduled
    * on data-nodes. The datanode will be informed of this work at the next
    * heartbeat.
+   *
+   * 计算可以在datanode上调度的block复制和失效工作。
+   * 在datanode下一次心跳时返回相应指令，让datanode执行
    * 
    * @return number of blocks scheduled for replication or removal.
    */

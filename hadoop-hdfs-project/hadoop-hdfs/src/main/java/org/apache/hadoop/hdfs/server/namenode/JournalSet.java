@@ -273,6 +273,7 @@ public class JournalSet implements JournalManager {
             ". Skipping.", ioe);
       }
     }
+    // 将文件输入流EditLogFileInputStream封装到RedundantEditLogInputStream
     chainAndMakeRedundantStreams(streams, allStreams, fromTxId);
   }
   
@@ -285,8 +286,7 @@ public class JournalSet implements JournalManager {
     // higher start transaction ID, we select a stream from the accumulator and
     // clear it.  Then we begin accumulating streams with the new, higher start
     // transaction ID.
-    LinkedList<EditLogInputStream> acc =
-        new LinkedList<EditLogInputStream>();
+    LinkedList<EditLogInputStream> acc = new LinkedList<>();
     EditLogInputStream elis;
     while ((elis = allStreams.poll()) != null) {
       if (acc.isEmpty()) {

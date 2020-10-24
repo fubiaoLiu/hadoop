@@ -108,6 +108,7 @@ abstract public class FSOutputSummer extends OutputStream {
       throw new ArrayIndexOutOfBoundsException();
     }
 
+    // 逻辑全在write1()中
     for (int n=0;n<len;n+=write1(b, off+n, len-n)) {
     }
   }
@@ -121,16 +122,19 @@ abstract public class FSOutputSummer extends OutputStream {
       // local buffer is empty and user buffer size >= local buffer size, so
       // simply checksum the user buffer and send it directly to the underlying
       // stream
+      // 如果数据大小超过内存缓冲的大小，直接写checksum、chunk到packet
       final int length = buf.length;
       writeChecksumChunks(b, off, length);
       return length;
     }
-    
+
+    // 如果数据大小没有超过缓冲大小，直接拷贝到缓冲里
     // copy user data to local buffer
     int bytesToCopy = buf.length-count;
     bytesToCopy = (len<bytesToCopy) ? len : bytesToCopy;
     System.arraycopy(b, off, buf, count, bytesToCopy);
     count += bytesToCopy;
+    // 如果缓冲满了，flush，flush其实也是写checksum、chunk到packet
     if (count == buf.length) {
       // local buffer is full
       flushBuffer();
@@ -211,9 +215,13 @@ abstract public class FSOutputSummer extends OutputStream {
     sum.calculateChunkedSums(b, off, len, checksum, 0);
     TraceScope scope = createWriteTraceScope();
     try {
+      // 每次循环都会处理bytesPerChecksum大小的数据
       for (int i = 0; i < len; i += sum.getBytesPerChecksum()) {
+        // 计算chunk的长度，小于等于bytesPerChecksum（512b）
         int chunkLen = Math.min(sum.getBytesPerChecksum(), len - i);
+        // 计算chunk的偏移量
         int ckOffset = i / sum.getBytesPerChecksum() * getChecksumSize();
+        // 这里会调用到子类DFSOutputStream的方法中
         writeChunk(b, off + i, chunkLen, checksum, ckOffset,
             getChecksumSize());
       }

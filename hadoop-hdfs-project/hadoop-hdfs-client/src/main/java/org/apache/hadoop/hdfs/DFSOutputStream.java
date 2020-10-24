@@ -247,10 +247,14 @@ public class DFSOutputStream extends FSOutputSummer
     this(dfsClient, src, flag, progress, stat, checksum);
     this.shouldSyncBlock = flag.contains(CreateFlag.SYNC_BLOCK);
 
+    // 计算packet数据包和chunk数据块的大小，这个在后面上传文件发送数据时会用到
+    // 默认chunk大小为512bytes
     computePacketChunkSize(dfsClient.getConf().getWritePacketSize(),
         bytesPerChecksum);
 
     if (createStreamer) {
+      // 这里会创建DataStreamer，它继承自Daemon，是一个守护线程
+      // 这个很重要很重要，底层发送数据的机制都是通过它来实现的
       streamer = new DataStreamer(stat, null, dfsClient, src, progress,
           checksum, cachingStrategy, byteArrayManager, favoredNodes,
           addBlockFlags);
@@ -273,6 +277,7 @@ public class DFSOutputStream extends FSOutputSummer
       while (shouldRetry) {
         shouldRetry = false;
         try {
+          // 通过namenode rpc代理创建文件
           stat = dfsClient.namenode.create(src, masked, dfsClient.clientName,
               new EnumSetWritable<>(flag), createParent, replication,
               blockSize, SUPPORTED_CRYPTO_VERSIONS, ecPolicyName);
@@ -306,6 +311,8 @@ public class DFSOutputStream extends FSOutputSummer
       }
       Preconditions.checkNotNull(stat, "HdfsFileStatus should not be null!");
       final DFSOutputStream out;
+      // namenode创建文件之后，这里会基于创建的文件信息创建DFSOutputStream输出流
+      // DFSOutputStream继承自FSOutputSummer，写入数据的时候会调用到父类FSOutputSummer中的write()方法
       if(stat.getErasureCodingPolicy() != null) {
         out = new DFSStripedOutputStream(dfsClient, src, stat,
             flag, progress, checksum, favoredNodes);
@@ -313,6 +320,7 @@ public class DFSOutputStream extends FSOutputSummer
         out = new DFSOutputStream(dfsClient, src, stat,
             flag, progress, checksum, favoredNodes, true);
       }
+      // 启动输出流，实际上就是启动流里面的DataStreamer
       out.start();
       return out;
     }
@@ -403,6 +411,10 @@ public class DFSOutputStream extends FSOutputSummer
   }
 
   protected void computePacketChunkSize(int psize, int csize) {
+    // psize：默认64*1024，64kb
+    // csize：默认512，512b
+    // block：默认64mb，包含2048个packet，一个packet包含127个chunk
+    // 一个完整的chunk大小为516b，包括：4b的checksum、512b的chunk
     final int bodySize = psize - PacketHeader.PKT_MAX_HEADER_LEN;
     final int chunkSize = csize + getChecksumSize();
     chunksPerPacket = Math.max(bodySize/chunkSize, 1);
@@ -420,14 +432,18 @@ public class DFSOutputStream extends FSOutputSummer
   @Override
   protected synchronized void writeChunk(byte[] b, int offset, int len,
       byte[] checksum, int ckoff, int cklen) throws IOException {
+    // 做一些校验，streamer是否关闭，packet是否为空，为空直接创建一个
     writeChunkPrepare(len, ckoff, cklen);
 
+    // 写checksum
     currentPacket.writeChecksum(checksum, ckoff, cklen);
+    // 写chunk
     currentPacket.writeData(b, offset, len);
     currentPacket.incNumChunks();
     getStreamer().incBytesCurBlock(len);
 
     // If packet is full, enqueue it for transmission
+    // 如果chunk达到指定数量或者block达到指定大小，将packet添加到dataQueue
     if (currentPacket.getNumChunks() == currentPacket.getMaxChunks() ||
         getStreamer().getBytesCurBlock() == blockSize) {
       enqueueCurrentPacketFull();
@@ -469,6 +485,7 @@ public class DFSOutputStream extends FSOutputSummer
                             getChecksumSize() + " but found to be " + cklen);
     }
 
+    // 当前packet为空直接创建一个，表示一个新的packet
     if (currentPacket == null) {
       currentPacket = createPacket(packetSize, chunksPerPacket, getStreamer()
           .getBytesCurBlock(), getStreamer().getAndIncCurrentSeqno(), false);
@@ -489,8 +506,10 @@ public class DFSOutputStream extends FSOutputSummer
             + " appendChunk={}, {}", currentPacket, src, getStreamer()
             .getBytesCurBlock(), blockSize, getStreamer().getAppendChunk(),
         getStreamer());
+    // 当前packet放入dataQueue，并且当前packet置为null，后面发送数据，会新建一个packet
     enqueueCurrentPacket();
     adjustChunkBoundary();
+    // 如果当前block结束了，创建一个空的packet发送到dataQueue
     endBlock();
   }
 
@@ -544,8 +563,11 @@ public class DFSOutputStream extends FSOutputSummer
    */
   void endBlock() throws IOException {
     if (getStreamer().getBytesCurBlock() == blockSize) {
+      // 创建一个空的packet
       setCurrentPacketToEmpty();
+      // 将空的packet添加到dataQueue队列
       enqueueCurrentPacket();
+      // 重置数据
       getStreamer().setBytesCurBlock(0);
       lastFlushOffset = 0;
     }
@@ -1078,6 +1100,7 @@ public class DFSOutputStream extends FSOutputSummer
     long localstart = Time.monotonicNow();
     while (true) {
       try {
+        // 向namenode申请一个block
         return dfsClient.namenode.addBlock(src, dfsClient.clientName, prevBlock,
             excludedNodes, fileId, favoredNodes, allocFlags);
       } catch (RemoteException e) {

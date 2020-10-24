@@ -2683,6 +2683,7 @@ public class DataNode extends ReconfigurableBase
   void closeBlock(ExtendedBlock block, String delHint, String storageUuid,
       boolean isTransientStorage) {
     metrics.incrBlocksWritten();
+    // 通知namenode接收了一个block
     notifyNamenodeReceivedBlock(block, delHint, storageUuid,
         isTransientStorage);
   }
@@ -3469,11 +3470,18 @@ public class DataNode extends ReconfigurableBase
    * A bad block need to be handled, either to add to blockScanner suspect queue
    * or report to NameNode directly.
    *
+   * 这个方法用于处理坏的block，比如将blockScanner添加到suspect队列，或者直接向namenode汇报
+   *
    * If the method is called by scanner, then the block must be a bad block, we
    * report it to NameNode directly. Otherwise if we judge it as a bad block
    * according to exception type, then we try to add the bad block to
    * blockScanner suspect queue if blockScanner is enabled, or report to
    * NameNode directly otherwise.
+   *
+   * 如果是scanner调用此方法，这个block肯定是坏的，直接上报给namenode。
+   * 否则，根据异常类型判断它是否损坏，
+   * 如果启动了blockScanner，就尝试将这个坏block添加到blockScanner的suspect队列，
+   * 否则，直接上报给namenode
    *
    * @param block The suspicious block
    * @param e The exception encountered when accessing the block
@@ -3493,6 +3501,7 @@ public class DataNode extends ReconfigurableBase
           block);
     } else {
       try {
+        // 上报本地破损的block
         reportBadBlocks(block);
       } catch (IOException ie) {
         LOG.warn("report bad block {} failed", block, ie);

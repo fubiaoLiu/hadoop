@@ -219,6 +219,10 @@ class FSDirWriteFileOp {
    * but under the write lock.
    * If the conditions still hold, then allocate a new block with
    * the new targets, add it to the INode and to the BlocksMap.
+   *
+   * getAdditionalBlock()方法的第二部分。
+   * 应该在持有写锁的情况下，对文件状态重复第一部分中相同的分析。
+   * 如果条件依旧成立，则分配一个新的block，并把它加到INode和BlocksMap中
    */
   static LocatedBlock storeAllocatedBlock(FSNamesystem fsn, String src,
       long fileId, String clientName, ExtendedBlock previous,
@@ -228,6 +232,7 @@ class FSDirWriteFileOp {
     // while chooseTarget() was executing.
     LocatedBlock[] onRetryBlock = new LocatedBlock[1];
     INodesInPath iip = fsn.dir.resolvePath(null, src, fileId);
+    // 分析文件状态
     FileState fileState = analyzeFileState(fsn, iip, fileId, clientName,
                                            previous, onRetryBlock);
     final INodeFile pendingFile = fileState.inode;
@@ -256,8 +261,10 @@ class FSDirWriteFileOp {
     // allocate new block, record block locations in INode.
     Block newBlock = fsn.createNewBlock(blockType);
     INodesInPath inodesInPath = INodesInPath.fromINode(pendingFile);
+    // 将创建的block交给BlockManager管理
     saveAllocatedBlock(fsn, src, inodesInPath, newBlock, targets, blockType);
 
+    // 持久化新block信息，就是写edit log
     persistNewBlock(fsn, src, pendingFile);
     offset = pendingFile.computeFileSize();
 
@@ -282,10 +289,14 @@ class FSDirWriteFileOp {
       }
     }
 
+    // 排除掉的datanode列表，比如第一次申请block后，在建立管道时客户端连接某个datanode失败，就会抛弃掉这个block，
+    // 重新申请block，重新申请时会传递排除掉的datanode，namenode分配datanode时就会排除掉这些datanode，
+    // 因为连不上，这个datanode可能已经死了
     Set<Node> excludedNodesSet =
         (excludedNodes == null) ? new HashSet<>()
             : new HashSet<>(Arrays.asList(excludedNodes));
 
+    // 同理，有个偏爱的datanode列表
     List<String> favoredNodesList =
         (favoredNodes == null) ? Collections.emptyList()
             : Arrays.asList(favoredNodes);

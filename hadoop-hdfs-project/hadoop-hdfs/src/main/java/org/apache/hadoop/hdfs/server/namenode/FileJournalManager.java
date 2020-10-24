@@ -376,12 +376,14 @@ public class FileJournalManager implements JournalManager {
       Collection<EditLogInputStream> streams, long fromTxId,
       boolean inProgressOk, boolean onlyDurableTxns)
       throws IOException {
+    // 获取当前路径下的匹配的日志文件
     List<EditLogFile> elfs = matchEditLogs(sd.getCurrentDir());
     if (LOG.isDebugEnabled()) {
       LOG.debug(this + ": selecting input streams starting at " + fromTxId +
           (inProgressOk ? " (inProgress ok) " : " (excluding inProgress) ") +
           "from among " + elfs.size() + " candidate file(s)");
     }
+    // 根据文件获取输入流
     addStreamsToCollectionFromFiles(elfs, streams, fromTxId,
         getLastReadableTxId(), inProgressOk);
   }

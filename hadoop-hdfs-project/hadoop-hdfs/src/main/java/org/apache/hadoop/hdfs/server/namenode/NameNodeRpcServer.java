@@ -1628,6 +1628,14 @@ public class NameNodeRpcServer implements NamenodeProtocols {
     return null;
   }
 
+  /**
+   * 用于处理接收和删除block的接口
+   * datanode接收到一个block后，也会调用这个接口通知namenode它接收到了一个datanode，状态就是RECEIVED_BLOCK
+   * @param nodeReg
+   * @param poolId
+   * @param receivedAndDeletedBlocks
+   * @throws IOException
+   */
   @Override // DatanodeProtocol
   public void blockReceivedAndDeleted(final DatanodeRegistration nodeReg,
       String poolId, StorageReceivedDeletedBlocks[] receivedAndDeletedBlocks)

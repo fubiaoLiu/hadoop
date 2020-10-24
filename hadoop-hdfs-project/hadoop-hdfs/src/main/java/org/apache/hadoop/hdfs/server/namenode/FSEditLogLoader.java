@@ -284,6 +284,7 @@ public class FSEditLogLoader {
               LOG.trace("op=" + op + ", startOpt=" + startOpt
                   + ", numEdits=" + numEdits + ", totalEdits=" + totalEdits);
             }
+            // 应用edit log
             long inodeId = applyEditLogOp(op, fsDir, startOpt,
                 in.getVersion(true), lastInodeId);
             if (lastInodeId < inodeId) {
@@ -424,6 +425,7 @@ public class FSEditLogLoader {
 
         // add to the file tree
         inodeId = getAndUpdateLastInodeId(addCloseOp.inodeId, logVersion, lastInodeId);
+        // 创建INodeFile并添加到内存树中
         newFile = FSDirWriteFileOp.addFileForEditLog(fsDir, inodeId,
             iip.getExistingINodes(), iip.getLastLocalName(),
             addCloseOp.permissions, addCloseOp.aclEntries,

@@ -113,6 +113,7 @@ public class Sender implements DataTransferProtocol {
         .setCachingStrategy(getCachingStrategy(cachingStrategy))
         .build();
 
+    // 发送READ_BLOCK请求，datanode会做一些初始化的事情，供后续读取的时候用
     send(out, Op.READ_BLOCK, proto);
   }
 

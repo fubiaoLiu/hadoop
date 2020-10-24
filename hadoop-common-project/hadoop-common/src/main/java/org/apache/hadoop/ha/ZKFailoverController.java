@@ -241,9 +241,13 @@ public abstract class ZKFailoverController {
     }
 
     try {
+      // 初始化rpc server，默认端口：8019
       initRPC();
+      // 初始化并启动healthMonitor
       initHM();
+      // 启动rpc server
       startRPC();
+      // 进入死循环，保证进程不退出
       mainLoop();
     } catch (Exception e) {
       LOG.error("The failover controller encounters runtime error: ", e);

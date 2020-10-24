@@ -387,6 +387,8 @@ public class IPCLoggerChannel implements AsyncLogger {
     
     ListenableFuture<Void> ret = null;
     try {
+      // IPCLoggerChannel是AsyncLogger的子类，每个AsyncLogger中维护了一个单线程的线程池
+      // 通过线程池提交任务
       ret = singleThreadExecutor.submit(new Callable<Void>() {
         @Override
         public Void call() throws IOException {
@@ -394,6 +396,7 @@ public class IPCLoggerChannel implements AsyncLogger {
 
           long rpcSendTimeNanos = System.nanoTime();
           try {
+            // 这里通过JournalNode的rpc代理，发送请求到JournalNodeRpcServer的journal()接口
             getProxy().journal(createReqInfo(),
                 segmentTxId, firstTxnId, numTxns, data);
           } catch (IOException e) {

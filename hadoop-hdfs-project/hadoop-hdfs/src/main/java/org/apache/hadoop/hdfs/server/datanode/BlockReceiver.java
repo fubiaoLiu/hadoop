@@ -215,6 +215,8 @@ class BlockReceiver implements Closeable {
         case PIPELINE_SETUP_CREATE:
           replicaHandler = datanode.data.createRbw(storageType, storageId,
               block, allowLazyPersist);
+
+          //通知namenode正在接收一个新的block
           datanode.notifyNamenodeReceivingBlock(
               block, replicaHandler.getReplica().getStorageUuid());
           break;
@@ -453,11 +455,15 @@ class BlockReceiver implements Closeable {
     LOG.info(datanode.getDNRegistrationForBP(bpid)
         + ":Exception writing " + block + " to mirror " + mirrorAddr, ioe);
     if (Thread.interrupted()) { // shut down if the thread is interrupted
+      // 如果是线程中断，直接抛出异常
       throw ioe;
     } else { // encounter an error while writing to mirror
       // continue to run even if can not write to mirror
       // notify client of the error
       // and wait for the client to shut down the pipeline
+      // 即使是镜像写入失败，也可以继续允许
+      // 这里只修改mirrorError标志位，返回packet接收状态时，会返回这个错误
+      // 最后通知到客户端，客户端会关闭管道
       mirrorError = true;
     }
   }
@@ -525,6 +531,8 @@ class BlockReceiver implements Closeable {
    */
   private int receivePacket() throws IOException {
     // read the next packet
+    // 读取下一个packet，它会区分哪部分数据是下一个packet，哪个是下下个packet
+    // 每个packet包都有标志性的内容，比如每个packet都有header
     packetReceiver.receiveNextPacket(in);
 
     PacketHeader header = packetReceiver.getHeader();
@@ -580,6 +588,7 @@ class BlockReceiver implements Closeable {
     }
 
     //First write the packet to the mirror:
+    // 发送到下游datanode
     if (mirrorOut != null && !mirrorError) {
       try {
         long begin = Time.monotonicNow();
@@ -601,6 +610,7 @@ class BlockReceiver implements Closeable {
               + ", blockId=" + replicaInfo.getBlockId());
         }
       } catch (IOException e) {
+        // 写入镜像时，除非由于中断而导致写入镜像失败，否则不会影响当前数据节点
         handleMirrorOutError(e);
       }
     }
@@ -613,6 +623,7 @@ class BlockReceiver implements Closeable {
         LOG.debug("Receiving an empty packet or the end of the block " + block);
       }
       // sync block if requested
+      // 如果是这个block的最后一个packet，将数据刷入磁盘
       if (syncBlock) {
         flushOrSync(true);
       }
@@ -627,6 +638,7 @@ class BlockReceiver implements Closeable {
 
       if (checksumReceivedLen > 0 && shouldVerifyChecksum()) {
         try {
+          // 校验chunk的checksum，防止数据在传输的过程中出现破损
           verifyChunks(dataBuf, checksumBuf);
         } catch (IOException ioe) {
           // checksum error detected locally. there is no reason to continue.
@@ -646,6 +658,7 @@ class BlockReceiver implements Closeable {
         if (needsChecksumTranslation) {
           // overwrite the checksums in the packet buffer with the
           // appropriate polynomial for the disk storage.
+          // 使用适合磁盘存储的多项式覆盖数据包缓冲区中的校验和
           translateChunks(dataBuf, checksumBuf);
         }
       }
@@ -725,6 +738,7 @@ class BlockReceiver implements Closeable {
           int numBytesToDisk = (int)(offsetInBlock-onDiskLen);
           
           // Write data to disk.
+          // 数据写入磁盘
           long begin = Time.monotonicNow();
           streams.writeDataToDisk(dataBuf.array(),
               startByteToDisk, numBytesToDisk);
@@ -1378,9 +1392,11 @@ class BlockReceiver implements Closeable {
           long seqno = PipelineAck.UNKOWN_SEQNO;
           long ackRecvNanoTime = 0;
           try {
+            // 如果不是最后一个packet，并且没有发生错误
             if (type != PacketResponderType.LAST_IN_PIPELINE && !mirrorError) {
               DataNodeFaultInjector.get().failPipeline(replicaInfo, mirrorAddr);
               // read an ack from downstream datanode
+              // 从下游datanode节点读取ack消息
               ack.readFields(downstreamIn);
               ackRecvNanoTime = System.nanoTime();
               if (LOG.isDebugEnabled()) {
@@ -1390,6 +1406,7 @@ class BlockReceiver implements Closeable {
               Status oobStatus = ack.getOOBStatus();
               if (oobStatus != null) {
                 LOG.info("Relaying an out of band ack of type " + oobStatus);
+                // 发送ack到上游节点
                 sendAckUpstream(ack, PipelineAck.UNKOWN_SEQNO, 0L, 0L,
                     PipelineAck.combineHeader(datanode.getECN(),
                       Status.SUCCESS));
@@ -1474,6 +1491,8 @@ class BlockReceiver implements Closeable {
 
           if (lastPacketInBlock) {
             // Finalize the block and close the block file
+            // 如果是最后一个packet，完成block并关闭block file文件
+            // 还会通知namenode接收了一个block
             finalizeBlock(startTime);
           }
 
@@ -1483,6 +1502,7 @@ class BlockReceiver implements Closeable {
             PipelineAck.combineHeader(datanode.getECN(), myStatus));
           if (pkt != null) {
             // remove the packet from the ack queue
+            // 通知成功后从ackQueue中移除
             removeAckHead();
           }
         } catch (IOException e) {
@@ -1619,6 +1639,7 @@ class BlockReceiver implements Closeable {
               + "thread is corrupt");
         }
       }
+      // 创建了一个PipelineAck对象，通过upstreamOut流写入到上游节点
       PipelineAck replyAck = new PipelineAck(seqno, replies,
           totalAckTimeNanos);
       if (replyAck.isSuccess()

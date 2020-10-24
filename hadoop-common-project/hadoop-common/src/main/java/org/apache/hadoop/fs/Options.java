@@ -258,6 +258,7 @@ public final class Options {
      * @param size bytes per checksum
      */
     public ChecksumOpt(DataChecksum.Type type, int size) {
+      // type默认CRC32C，size默认512
       checksumType = type;
       bytesPerChecksum = size;
     }

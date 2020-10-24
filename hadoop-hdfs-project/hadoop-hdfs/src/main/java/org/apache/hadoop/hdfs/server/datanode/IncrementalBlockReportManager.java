@@ -149,6 +149,7 @@ class IncrementalBlockReportManager {
   }
 
   boolean sendImmediately() {
+    // ibrInterval默认是0，就是只要有待发送的block report就可以发送，取决去调用方什么时候执行
     return readyToSend && monotonicNow() - ibrInterval >= lastIBR;
   }
 
@@ -241,6 +242,9 @@ class IncrementalBlockReportManager {
   /**
    * Add a block for notification to NameNode.
    * If another entry exists for the same block it is removed.
+   *
+   * 添加一个要通知NameNode的block条目
+   * 如果同一个block已经存在其他的通知条目，则将它删除
    */
   @VisibleForTesting
   synchronized void addRDBI(ReceivedDeletedBlockInfo rdbi,

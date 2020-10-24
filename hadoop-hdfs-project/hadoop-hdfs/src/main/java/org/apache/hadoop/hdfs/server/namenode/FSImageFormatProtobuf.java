@@ -506,6 +506,7 @@ public final class FSImageFormatProtobuf {
      * @throws IOException on fatal error.
      */
     long save(File file, FSImageCompression compression) throws IOException {
+      // 创建文件对应的输出流
       FileOutputStream fout = new FileOutputStream(file);
       fileChannel = fout.getChannel();
       try {
@@ -571,6 +572,7 @@ public final class FSImageFormatProtobuf {
       int layoutVersion =
           context.getSourceNamesystem().getEffectiveLayoutVersion();
 
+      // 使用DigestOutputStream包装的输出流输出数据，包装流中的MessageDigest会对输出文件计算一个SHA值
       underlyingOutputStream = new DigestOutputStream(new BufferedOutputStream(
           fout), digester);
       underlyingOutputStream.write(FSImageUtil.MAGIC_HEADER);
