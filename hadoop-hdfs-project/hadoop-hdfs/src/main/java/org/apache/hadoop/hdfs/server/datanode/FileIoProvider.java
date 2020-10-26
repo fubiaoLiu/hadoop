@@ -166,6 +166,7 @@ public class FileIoProvider {
     final long begin = profilingEventHook.beforeFileIo(volume, SYNC, 0);
     try {
       faultInjectorEventHook.beforeFileIo(volume, SYNC, 0);
+      // 核心代码在这里面，使用NIO的FileChannel对目录执行fsync操作，缩短fsync的等待周期尽快执行fsync
       IOUtils.fsync(dir);
       profilingEventHook.afterFileIo(volume, SYNC, begin, 0);
     } catch (Exception e) {

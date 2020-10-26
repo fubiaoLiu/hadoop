@@ -982,6 +982,11 @@ class BlockReceiver implements Closeable {
         responder.start(); // start thread to processes responses
       }
 
+      // 核心代码在这里，一个一个packet接收
+      // 在2.7.4版本之前，这里其实有个问题，block上传到datanode之后，datanode会将流里的数据flush到磁盘
+      // 但是flush只是将数据刷入OS cache，会在一个不确定的时间实际写入到磁盘，这个是由操作系统控制的
+      // 所以如果这个时候机器挂了（比如断电），就有可能导致block数据丢失
+      // 2.7.4在下面的finalizeBlock方法中修复了这个问题，block接收完之后手动fsync，将文件从OS cache刷入磁盘
       while (receivePacket() >= 0) { /* Receive until the last packet */ }
 
       // wait for all outstanding packet responses. And then
@@ -1008,6 +1013,8 @@ class BlockReceiver implements Closeable {
           } else {
             // for isDatnode or TRANSFER_FINALIZED
             // Finalize the block.
+            // 完成block的写操作
+            // 这里使用NIO的FileChannel对block所在目录执行fsync操作，使变更尽快写入磁盘，降低机器宕机数据丢失的概率
             datanode.data.finalizeBlock(block, dirSyncOnFinalize);
           }
         }

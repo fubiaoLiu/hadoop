@@ -1735,6 +1735,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
         && replicaInfo instanceof LocalReplica) {
       FinalizedReplica finalizedReplica =
           (FinalizedReplica) finalizedReplicaInfo;
+      // 这里会调用文件所在目录的fsync，将文件夹的变更写入磁盘
       finalizedReplica.fsyncDirectory();
       LocalReplica localReplica = (LocalReplica) replicaInfo;
       localReplica.fsyncDirectory();
