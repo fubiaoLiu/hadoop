@@ -51,7 +51,7 @@ class QuorumCall<KEY, RESULT> {
    * while waiting for a quorum call.
    */
   private static final int WAIT_PROGRESS_INTERVAL_MILLIS = 1000;
-  
+
   /**
    * Start logging messages at INFO level periodically after waiting for
    * this fraction of the configured timeout for any call.
@@ -64,7 +64,7 @@ class QuorumCall<KEY, RESULT> {
   private static final float WAIT_PROGRESS_WARN_THRESHOLD = 0.7f;
   private final StopWatch quorumStopWatch;
   private final Timer timer;
-  
+
   static <KEY, RESULT> QuorumCall<KEY, RESULT> create(
       Map<KEY, ? extends ListenableFuture<RESULT>> calls, Timer timer) {
     final QuorumCall<KEY, RESULT> qr = new QuorumCall<KEY, RESULT>(timer);
@@ -122,8 +122,12 @@ class QuorumCall<KEY, RESULT> {
    * @return Length of pause, if detected, else -1
    */
   private long getQuorumTimeoutIncreaseMillis(long offset, int millis) {
+    // elapsed计时器计算的时间
     long elapsed = quorumStopWatch.now(TimeUnit.MILLISECONDS);
+    // 停顿时间
     long pauseTime = elapsed + offset;
+    // 这里表示如果停顿时间大于超时时间的1/3，就认为是发生了FullGC，返回停顿时间
+    // 否则返回-1
     if (pauseTime > (millis * WAIT_PROGRESS_INFO_THRESHOLD)) {
       QuorumJournalManager.LOG.info("Pause detected while waiting for " +
           "QuorumCall response; increasing timeout threshold by pause time " +
@@ -134,10 +138,10 @@ class QuorumCall<KEY, RESULT> {
     }
   }
 
-  
+
   /**
    * Wait for the quorum to achieve a certain number of responses.
-   * 
+   *
    * Note that, even after this returns, more responses may arrive,
    * causing the return value of other methods in this class to change.
    *
@@ -157,17 +161,43 @@ class QuorumCall<KEY, RESULT> {
       int minResponses, int minSuccesses, int maxExceptions,
       int millis, String operationName)
       throws InterruptedException, TimeoutException {
+    // minResponses：最少已经返回响应的数量，这里就等于AsyncLogger的数量，就是JournalNode数量
+    // minSuccesses：最少已经成功响应的数量，大多数节点的数量
+    // maxExceptions：最多响应异常的数量，大多数节点的数量
+    // millis：超时时间，默认是20s
+    // operationName：sendEdits
+
+    // 先模拟一下程序执行过程，假设第一遍进入循环正常执行，第二遍进入循环后在循环内几个地方发生了FullGC
+
+    // st：开始执行时间
+    // 1、假设是10:00:00
     long st = timer.monotonicNow();
+    // 下次打印log时间是：超时时间 * 0.3，默认就是6s
+    // 1、根据开始时间计算为10:00:06
     long nextLogTime = st + (long)(millis * WAIT_PROGRESS_INFO_THRESHOLD);
+    // et：结束执行时间
+    // 1、根据开始时间计算为10:00:20
     long et = st + millis;
     while (true) {
+      // 重置StopWatch计时器
+      // TODO：这里有个疑问，如果在重置StopWatch的代码执行前，计时器还没开始计时
+      //  此时发生了FullGC导致停顿，计时器就不起作用了，理论上还是存在一定概率FullGC导致QJM集群写入失败后异常宕机？
       restartQuorumStopWatch();
       checkAssertionErrors();
+      // 如果返回响应的节点数达到了最少响应数量，则返回
       if (minResponses > 0 && countResponses() >= minResponses) return;
+      // 如果最少成功响应的数量达到，则返回
       if (minSuccesses > 0 && countSuccesses() >= minSuccesses) return;
+      // 如果异常响应的数量达到最多，则返回
       if (maxExceptions >= 0 && countExceptions() > maxExceptions) return;
+      // 当前时间
+      // 1、假设执行完上面这段代码后时间变为（10:00:01）
+      // 2、假设这里发生FullGC停顿了30s（如果NameNode内存很大，FullGC甚至可能长达几分钟）,此时时间为（10:00:37）
       long now = timer.monotonicNow();
-      
+
+      // 这里是打印日志的，就是等待超过一定时间就会打印一些日志
+      // 1、这里不会进
+      // 2、这里会进分支
       if (now > nextLogTime) {
         long waited = now - st;
         String msg = String.format(
@@ -187,24 +217,49 @@ class QuorumCall<KEY, RESULT> {
         } else {
           QuorumJournalManager.LOG.info(msg);
         }
+        // 2、nextLogTime设置为（10:00:38）
         nextLogTime = now + WAIT_PROGRESS_INTERVAL_MILLIS;
       }
+
+      // rem：结束时间距离当前时间还剩多少时间
+      // 1、19s
+      // 2、-18s
       long rem = et - now;
+      // 小于等于0表示结束时间已经到了
+      // 1、不会进这个条件分支
+      // 2、会进这个条件分支
       if (rem <= 0) {
         // Increase timeout if a full GC occurred after restarting stopWatch
+        // 这里是获取计时器计算的时间，就是表示FullGC停顿的时间
+        // 2、计算停顿时间为30s
         long timeoutIncrease = getQuorumTimeoutIncreaseMillis(0, millis);
+        // 如果停顿时间大于0，表示触发了FullGC，et则顺延相应GC停顿的时间
+        // 2、会进这个分支，将et顺延30s（10:00:50），程序可以继续执行
         if (timeoutIncrease > 0) {
           et += timeoutIncrease;
         } else {
+          // 否则则认为是写入失败，抛出异常，异常一层一层往外抛，最后进程会退出
           throw new TimeoutException();
         }
       }
+      // 重置StopWatch计时器
+      // TODO：这里同上
       restartQuorumStopWatch();
+      // 1、rem = 5s
+      // 2、rem = -18s
       rem = Math.min(rem, nextLogTime - now);
+      // 1、rem = 5s
+      // 2、rem = 1s
       rem = Math.max(rem, 1);
+      // 1、wait等待5s
+      // 2、wait等待1s
       wait(rem);
       // Increase timeout if a full GC occurred after restarting stopWatch
+      // 1、这里获取的停顿时间为-1
+      // 2、假设在重置计时器和执行行代码之前，发生了FullGC，时间为30s，也会将et顺延30s
+      //    不然下次进入循环后当前时间就已经超过了et，同样会导致异常。
       long timeoutIncrease = getQuorumTimeoutIncreaseMillis(-rem, millis);
+      // 1、不会进这个条件分支
       if (timeoutIncrease > 0) {
         et += timeoutIncrease;
       }
@@ -216,7 +271,7 @@ class QuorumCall<KEY, RESULT> {
    * If so, it re-throws it, even if there was a quorum of responses.
    * This code only runs if assertions are enabled for this class,
    * otherwise it should JIT itself away.
-   * 
+   *
    * This is done since AssertionError indicates programmer confusion
    * rather than some kind of expected issue, and thus in the context
    * of test cases we'd like to actually fail the test case instead of
@@ -242,12 +297,12 @@ class QuorumCall<KEY, RESULT> {
     successes.put(k, res);
     notifyAll();
   }
-  
+
   private synchronized void addException(KEY k, Throwable t) {
     exceptions.put(k, t);
     notifyAll();
   }
-  
+
   /**
    * @return the total number of calls for which a response has been received,
    * regardless of whether it threw an exception or returned a successful
@@ -256,7 +311,7 @@ class QuorumCall<KEY, RESULT> {
   public synchronized int countResponses() {
     return successes.size() + exceptions.size();
   }
-  
+
   /**
    * @return the number of calls for which a non-exception response has been
    * received.
@@ -264,7 +319,7 @@ class QuorumCall<KEY, RESULT> {
   public synchronized int countSuccesses() {
     return successes.size();
   }
-  
+
   /**
    * @return the number of calls for which an exception response has been
    * received.

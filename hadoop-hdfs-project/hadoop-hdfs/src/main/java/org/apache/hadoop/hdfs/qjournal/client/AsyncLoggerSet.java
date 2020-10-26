@@ -126,6 +126,13 @@ class AsyncLoggerSet {
     // 大多数节点的数量
     int majority = getMajoritySize();
     try {
+      // 这个方法中，会等待大多数节点执行成功，然后返回。
+      // 在2.7.4版本修复了一个bug，在等待大多数节点执行成功时会有一个超时时间（默认20s）
+      // 如果超过时间则认为JournalNode集群有问题提，写入失败并抛出异常，最后会导致namenode进程退出。
+      // 这样正常是没有什么问题，但是假设此时namenode发生了FullGC停顿了很长时间，导致过了超时时间
+      // 这里可能会有误伤，JournalNode集群根本没问题，是namenode自己导致的写入超时
+      // 这里通过一个StopWatch计时器解决了这个问题，StopWatch在GC发生时可能影响超时时间的地方，进行计时
+      // 如果超过了一定时间，则认为是发生了FullGC，会延长超时时间
       q.waitFor(
           loggers.size(), // either all respond 
           majority, // or we get a majority successes

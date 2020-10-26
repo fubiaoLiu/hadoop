@@ -462,6 +462,7 @@ public class FSEditLog implements LogsPurgeable {
       waitIfAutoSyncScheduled();
 
       // check if it is time to schedule an automatic sync
+      // 在这里面写edit log
       needsSync = doEditTransaction(op);
       if (needsSync) {
         isAutoSyncScheduled = true;
@@ -475,6 +476,7 @@ public class FSEditLog implements LogsPurgeable {
   }
 
   synchronized boolean doEditTransaction(final FSEditLogOp op) {
+    // 先获取一个全局唯一的txid，通过调用方的synchronized实现
     long start = beginTransaction();
     op.setTransactionId(txid);
 
@@ -721,6 +723,12 @@ public class FSEditLog implements LogsPurgeable {
       try {
         if (logStream != null) {
           // 执行flush
+          // 这里先调用到JournalSetOutputStream中，在调用JournalSet中几个流的flush方法，会先调用到EditLogOutputStream中
+          // 然后EditLogOutputStream的flush方法中的flushAndSync会调用到子类EditLogFileOutputStream和QuorumOutputStream中
+
+          // 在2.7.4之前这里面有一个bug，写入edit log到JournalNode集群时，如果NameNode发生FullGC导致超时会抛出IOException异常
+          // 如果抛出IO异常，会执行下面的terminate方法，最后会执行System.exit()退出进程
+          // 2.7.4通过StopWatch计时器修复了改问题
           logStream.flush();
         }
       } catch (IOException ex) {
