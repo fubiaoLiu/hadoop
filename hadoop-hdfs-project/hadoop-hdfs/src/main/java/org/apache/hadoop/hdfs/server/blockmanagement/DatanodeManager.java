@@ -707,12 +707,16 @@ public class DatanodeManager {
   private void removeDatanode(DatanodeDescriptor nodeInfo,
       boolean removeBlocksFromBlocksMap) {
     assert namesystem.hasWriteLock();
+    // 删除datanode数据
     heartbeatManager.removeDatanode(nodeInfo);
     if (removeBlocksFromBlocksMap) {
+      // 删除block相关的数据
       blockManager.removeBlocksAssociatedTo(nodeInfo);
     }
+    // 删除datanode在网络拓扑中的数据
     networktopology.remove(nodeInfo);
     decrementVersionCount(nodeInfo.getSoftwareVersion());
+    // 从BlockReportLeaseManager中删除datanode节点信息
     blockManager.getBlockReportLeaseManager().unregister(nodeInfo);
 
     if (LOG.isDebugEnabled()) {

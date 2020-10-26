@@ -1921,6 +1921,7 @@ public class BlockManager implements BlockStatsMXBean {
     } finally {
       namesystem.writeUnlock();
     }
+    // 计算block的重建任务，以达到指定数量
     return computeReconstructionWorkForBlocks(blocksToReconstruct);
   }
 
@@ -1944,7 +1945,7 @@ public class BlockManager implements BlockStatsMXBean {
         for (int priority = 0; priority < blocksToReconstruct
             .size(); priority++) {
           for (BlockInfo block : blocksToReconstruct.get(priority)) {
-            // 第一步：构建block的复制任务
+            // 第一步：构建block的复制任务，这里会选择源datanode节点
             BlockReconstructionWork rw = scheduleReconstruction(block,
                 priority);
             if (rw != null) {
@@ -2329,6 +2330,11 @@ public class BlockManager implements BlockStatsMXBean {
     List<DatanodeDescriptor> srcNodes = new ArrayList<>();
     liveBlockIndices.clear();
     final boolean isStriped = block.isStriped();
+    // decommissioned是指已下线的datanode
+    // 在正常运行的集群中要下线一些datanode，要先配置一个exclude配置文件
+    // 然后执行refreshNodes命令将他们从集群中剔除（因为要知道这些datanode上有哪些数据，然后计算一些复制任务啥的）
+    // 然后这些datanode就会变成decommissoned（已下线）、decommisson_inprogress（下线中）的状态
+    // 此时datanode服务还没有停止运行，还是可以提供服务的
     DatanodeDescriptor decommissionedSrc = null;
 
     BitSet bitSet = isStriped ?
@@ -2362,6 +2368,11 @@ public class BlockManager implements BlockStatsMXBean {
       // Save the live decommissioned replica in case we need it. Such replicas
       // are normally not used for replication, but if nothing else is
       // available, one can be selected as a source.
+      // 这里做了一个兜底方案，就是如果没有取到可用的datanode，就会从DECOMMISSIONED状态的datanode中随机选择一个
+      // 防止在没有可用的datanode时，找不到源datanode导致数据丢失
+      // 这里的datanode虽然已经下线了，但是只要服务没被停止、还在运行，是可以提供服务的
+      // 场景就是：同时下线多个datanode，刚好某个block3个部分所在的datanode都在这里面，就可能导致没有找到存活的datanode
+      // 极端情况，在2.7.4之前是可能存在数据丢失问题的
       if (state == StoredReplicaState.DECOMMISSIONED) {
         if (decommissionedSrc == null ||
             ThreadLocalRandom.current().nextBoolean()) {
@@ -2403,6 +2414,7 @@ public class BlockManager implements BlockStatsMXBean {
     }
 
     // Pick a live decommissioned replica, if nothing else is available.
+    // 如果没有拿到存活的datanode，就将备用的已下线的datanode返回
     if (!isStriped && nodesContainingLiveReplicas.isEmpty() &&
         srcNodes.isEmpty() && decommissionedSrc != null) {
       srcNodes.add(decommissionedSrc);
