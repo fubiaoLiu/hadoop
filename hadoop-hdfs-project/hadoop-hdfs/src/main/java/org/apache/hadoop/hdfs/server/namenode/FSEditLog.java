@@ -453,6 +453,30 @@ public class FSEditLog implements LogsPurgeable {
    * if a time interval has elapsed).
    */
   void logEdit(final FSEditLogOp op) {
+    // 写edit log采用了分段加锁，将最耗时的写磁盘操作放在了锁外面
+    // 使得一个线程在刷磁盘，其他线程依旧可以写输入
+    // 线程写数据全部加锁往bufCurrent中写，因为是纯内存操作，所以速度是很快的（微妙甚至是纳秒级的）
+    // 假设当前线程写完数据发现bufCurrent已经满了，就要刷磁盘，此时会将isAutoSyncScheduled标志位设置为true，并且释放锁
+    // 其他线程此时即使获取锁也无法往bufCurrent中写数据，会在while循环中等待、释放锁
+    // 当前线程重新获取锁后，会看当前是否有其他线程在刷磁盘（isSyncRunning是否为true）
+    // 如果有，就表示有其他线程在刷bufReady缓冲区，那么就要在while循环中wait等待、释放锁
+    //    直到该线程刷盘完毕，并将isSyncRunning标志位改为false，然后执行下面步骤
+    // 如果没有，就会交换两个缓冲区，然后将isSyncRunning标志位设置为true、
+    //    isAutoSyncScheduled设置为false（这就表示其他线程可以继续往空的bufCurrent中写数据了，写满的数据已经转移到了bufReady中）
+    // 然后当前线程会释放锁、然后执行刷盘操作，其他线程获取锁后就可以往bufCurrent中写数据了（当前线程flush磁盘和其他线程写buffer就可以并发执行了）
+    // 如果当前线程还在刷盘，其他线程快速将bufCurrent写满了，并且要执行刷盘，因为isSyncRunning为true，就会卡在while循环中等待
+    // 当前线程刷盘结束后，会获取锁，将isSyncRunning标志位设置为false，并且修改synctxid的值为当前线程的txid
+
+    // 这里发现一个问题，就是两块缓冲区的大小才1MB，并且这个配置是代码中写死的
+    // 如果在瞬时超高吞吐的时候，是很容易快速将两个缓冲区写满的，此时后面的线程就无法写数据，只能卡死在while循环里等待
+    // 比如说：大规模集群部署的分布式计算引擎，他在瞬时间超高并发来大量的创建临时hdfs文件，
+    //    就可能会产生每秒上万并发的请求来写edits log的日志，可能会短时间内导致两块缓冲区全部写满。
+    // 很多线程hang死在这里，不能干其他事情、不能返回，是没有意义的，会导致NameNode假死、无法响应请求（NameNode、DataNode停止工作）
+    // 所以适当的可以根据自己系统的情况，调大双缓冲的大小，比如扩大10倍、甚至100倍，也才10M、100M
+    // NameNode一般都是高配置的物理机（比如：32核128G），内存给大一点没关系，当然具体的值要根据情况尝试调节，默认的512kb偏小
+    // 这里一个QJM output缓冲区的大小默认限制不能超过64M，就是两个不能超过128M。
+    //    受限于RPC请求的数据大小限制，超过限制JournalNode会拒绝请求（最大限制支持参数配置：ipc.maximum.data.length）
+    // 这里一个本地output缓冲区的大小写死就是512kb，两个就是1M。可以修改为可配置的，根据参数启动时动态设置
     boolean needsSync = false;
     synchronized (this) {
       assert isOpenForWrite() :
@@ -462,15 +486,19 @@ public class FSEditLog implements LogsPurgeable {
       waitIfAutoSyncScheduled();
 
       // check if it is time to schedule an automatic sync
-      // 在这里面写edit log
+      // 在这里面写edit log，返回是否需要执行刷盘操作
       needsSync = doEditTransaction(op);
       if (needsSync) {
+        // 如果需要执行刷盘，将isAutoSyncScheduled标志位设置为true
         isAutoSyncScheduled = true;
       }
     }
 
     // Sync the log if an automatic sync is required.
     if (needsSync) {
+      // 执行刷盘操作
+      // 这里会将两个缓冲区交换，然后将写满的缓冲区刷新到磁盘上去
+      // 其他线程就可以将数据写入空的缓冲区，提高执行效率
       logSync();
     }
   }
@@ -497,6 +525,8 @@ public class FSEditLog implements LogsPurgeable {
       op.reset();
     }
     endTransaction(start);
+    // 这里判断是否需要执行刷盘操作
+    // 如果bufCurrent中数据的大小已经超过了initBufferSize（默认是512kb）的大小，就会执行刷盘操作
     return shouldForceSync();
   }
 
@@ -505,6 +535,9 @@ public class FSEditLog implements LogsPurgeable {
    */
   synchronized void waitIfAutoSyncScheduled() {
     try {
+      // isAutoSyncScheduled默认是false，这里会直接跳过
+      // 如果有线程要执行刷盘操作，就会将isAutoSyncScheduled设置为true，其他线程就要在这里卡住
+      // 当那个线程交换了双缓冲区之后，会将isAutoSyncScheduled设置为false，其他线程就会退出循环等待，往另外一个缓冲区中写入数据
       while (isAutoSyncScheduled) {
         this.wait(1000);
       }
